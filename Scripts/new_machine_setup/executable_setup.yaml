@@ -1,0 +1,162 @@
+#ansible-playbook -i hosts setup.yml --ask-become-pass -e "user_name=$USER"
+---
+- hosts: localhost
+  become: true
+  vars:
+    user_name: "{{ ansible_user_id }}"  # Default to the user running the playbook
+
+  tasks:
+    - name: Install essential packages including Golang and Docker
+      dnf:
+        name:
+          - git
+          - neovim
+          - ffmpegthumbnailer
+          - p7zip
+          - p7zip-plugins
+          - xclip
+          - ImageMagick
+          - zsh
+          - kitty
+          - fzf
+          - fd-find
+          - zoxide
+          - ripgrep
+          - dnf-plugins-core
+          - golang
+          - virt-manager
+          - docker
+          - docker-compose
+        state: present
+
+    - name: Add Brave Browser repo to dnf config
+      command: >
+        dnf config-manager --add-repo https://brave-browser-rpm-release.s3.brave.com/brave-browser.repo
+      args:
+        creates: /etc/yum.repos.d/brave-browser.repo
+
+    - name: Import Brave GPG key
+      rpm_key:
+        state: present
+        key: https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
+
+    - name: Install Brave Browser
+      dnf:
+        name: brave-browser
+        state: present
+
+    # VSCode installation starts here
+    - name: Import Microsoft GPG key
+      command: rpm --import https://packages.microsoft.com/keys/microsoft.asc
+
+    - name: Add VSCode repository
+      copy:
+        content: |
+          [code]
+          name=Visual Studio Code
+          baseurl=https://packages.microsoft.com/yumrepos/vscode
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+        dest: /etc/yum.repos.d/vscode.repo
+        mode: "0644"
+
+    - name: Install VSCode
+      dnf:
+        name: code
+        state: present
+
+    # ChezMoi tasks
+    - name: Download ChezMoi RPM
+      get_url:
+        url: "https://github.com/twpayne/chezmoi/releases/download/v2.52.4/chezmoi-2.52.4-x86_64.rpm"
+        dest: "/tmp/chezmoi.rpm"
+
+    - name: Install ChezMoi RPM
+      dnf:
+        name: "/tmp/chezmoi.rpm"
+        state: present
+        disable_gpg_check: yes
+
+    - name: Initialize ChezMoi with dotfiles from GitHub
+      command: chezmoi init --apply https://github.com/mgstet/dotfiles.git
+      become_user: "{{ user_name }}"
+
+    # Meslo Font Installation into a common subfolder
+    - name: Create meslo-lgs-nf fonts directory
+      file:
+        path: /usr/share/fonts/meslo-lgs-nf
+        state: directory
+        mode: "0755"
+
+    - name: Download Meslo Bold Italic
+      get_url:
+        url: "https://github.com/romkatv/powerlevel10k-media/raw/refs/heads/master/MesloLGS%20NF%20Bold%20Italic.ttf"
+        dest: "/usr/share/fonts/meslo-lgs-nf/MesloLGS NF Bold Italic.ttf"
+        mode: "0644"
+
+    - name: Download Meslo Bold
+      get_url:
+        url: "https://github.com/romkatv/powerlevel10k-media/raw/refs/heads/master/MesloLGS%20NF%20Bold.ttf"
+        dest: "/usr/share/fonts/meslo-lgs-nf/MesloLGS NF Bold.ttf"
+        mode: "0644"
+
+    - name: Download Meslo Italic
+      get_url:
+        url: "https://github.com/romkatv/powerlevel10k-media/raw/refs/heads/master/MesloLGS%20NF%20Italic.ttf"
+        dest: "/usr/share/fonts/meslo-lgs-nf/MesloLGS NF Italic.ttf"
+        mode: "0644"
+
+    - name: Download Meslo Regular
+      get_url:
+        url: "https://github.com/romkatv/powerlevel10k-media/raw/refs/heads/master/MesloLGS%20NF%20Regular.ttf"
+        dest: "/usr/share/fonts/meslo-lgs-nf/MesloLGS NF Regular.ttf"
+        mode: "0644"
+
+    - name: Update font cache
+      command: fc-cache -fv
+
+    # RPM Fusion Repository Installation
+    - name: Install distribution GPG keys
+      dnf:
+        name: distribution-gpg-keys
+        state: present
+
+    - name: Import RPM Fusion Free GPG key
+      command: rpmkeys --import /usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-free-fedora-{{ ansible_facts['distribution_version'] }}
+
+    - name: Import RPM Fusion Nonfree GPG key
+      command: rpmkeys --import /usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-nonfree-fedora-{{ ansible_facts['distribution_version'] }}
+
+    - name: Install RPM Fusion Free repository
+      dnf:
+        name: "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ ansible_facts['distribution_version'] }}.noarch.rpm"
+        state: present
+
+    - name: Install RPM Fusion Nonfree repository
+      dnf:
+        name: "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ ansible_facts['distribution_version'] }}.noarch.rpm"
+        state: present
+
+    # Docker setup
+    - name: Enable and start Docker service
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Add user to the docker group
+      user:
+        name: "{{ user_name }}"
+        groups: docker
+        append: yes
+
+    # Multimedia setup
+    - name: Swap ffmpeg-free with full ffmpeg version
+      command: dnf -y swap ffmpeg-free ffmpeg --allowerasing
+
+    - name: Install additional multimedia codecs for gstreamer
+      command: dnf -y update @multimedia --setopt="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin
+
+    - name: Install additional sound and video complement packages
+      command: dnf -y install @sound-and-video
